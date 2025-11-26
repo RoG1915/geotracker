@@ -1,10 +1,10 @@
 """
 GeoTracker - Sistema de Geolocalización con Mapa Interactivo
-Permite subir un Excel con ubicaciones y visualizarlas en un mapa estilo Google Earth
+Versión sin pandas - Compatible con Python 3.13
 """
 
 from flask import Flask, render_template, request, jsonify
-import pandas as pd
+import openpyxl
 import os
 import re
 
@@ -22,7 +22,7 @@ def parse_coordinates(coord_string):
     - "-6.7749,-79.8408"
     - "-6.7749 -79.8408"
     """
-    if pd.isna(coord_string):
+    if coord_string is None:
         return None, None
     
     coord_string = str(coord_string).strip()
@@ -39,45 +39,55 @@ def parse_coordinates(coord_string):
     return None, None
 
 def process_excel(file_path):
-    """Procesa el archivo Excel y extrae las ubicaciones"""
+    """Procesa el archivo Excel y extrae las ubicaciones usando openpyxl"""
     try:
-        # Leer el Excel
-        df = pd.read_excel(file_path)
+        # Cargar el archivo Excel
+        workbook = openpyxl.load_workbook(file_path)
+        sheet = workbook.active
         
-        # Normalizar nombres de columnas (quitar espacios, minúsculas)
-        df.columns = df.columns.str.strip().str.lower()
+        # Obtener encabezados (primera fila)
+        headers = []
+        for cell in sheet[1]:
+            if cell.value:
+                headers.append(str(cell.value).strip().lower())
+            else:
+                headers.append('')
         
         # Buscar columnas de descripción y coordenadas
         desc_col = None
         coord_col = None
         
-        for col in df.columns:
-            if 'desc' in col or 'nombre' in col or 'lugar' in col or 'ubicacion' in col:
-                desc_col = col
-            if 'coord' in col or 'latitud' in col or 'ubicacion' in col or 'gps' in col:
-                coord_col = col
+        for idx, header in enumerate(headers):
+            if 'desc' in header or 'nombre' in header or 'lugar' in header:
+                desc_col = idx
+            if 'coord' in header or 'latitud' in header or 'gps' in header:
+                coord_col = idx
         
         # Si no encuentra, usar las dos primeras columnas
         if desc_col is None:
-            desc_col = df.columns[0]
+            desc_col = 0
         if coord_col is None:
-            coord_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+            coord_col = 1 if len(headers) > 1 else 0
         
         locations = []
-        for _, row in df.iterrows():
-            descripcion = str(row[desc_col]).strip() if pd.notna(row[desc_col]) else "Sin descripción"
-            coord_raw = row[coord_col]
-            
-            lat, lon = parse_coordinates(coord_raw)
-            
-            if lat is not None and lon is not None:
-                locations.append({
-                    'descripcion': descripcion,
-                    'lat': lat,
-                    'lon': lon,
-                    'coordenadas_raw': str(coord_raw)
-                })
         
+        # Iterar filas (desde la 2 para saltar encabezados)
+        for row_num, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+            if row and len(row) > max(desc_col, coord_col):
+                descripcion = str(row[desc_col]).strip() if row[desc_col] else "Sin descripción"
+                coord_raw = row[coord_col]
+                
+                lat, lon = parse_coordinates(coord_raw)
+                
+                if lat is not None and lon is not None:
+                    locations.append({
+                        'descripcion': descripcion,
+                        'lat': lat,
+                        'lon': lon,
+                        'coordenadas_raw': str(coord_raw)
+                    })
+        
+        workbook.close()
         return locations, None
     
     except Exception as e:
